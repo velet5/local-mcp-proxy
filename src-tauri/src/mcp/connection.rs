@@ -185,7 +185,7 @@ impl McpConnection {
         Ok(())
     }
 
-    /// Connect via SSE transport (rmcp 0.15 uses StreamableHttpClientTransport for HTTP/SSE)
+    /// Connect via legacy SSE transport (GET /sse + POST /messages)
     async fn connect_sse(&self) -> Result<()> {
         let url = self
             .config
@@ -193,12 +193,16 @@ impl McpConnection {
             .as_ref()
             .ok_or_else(|| anyhow!("No URL specified for SSE transport"))?;
 
-        use rmcp::transport::StreamableHttpClientTransport;
-        let transport = StreamableHttpClientTransport::from_uri(url.as_str());
+        use crate::mcp::legacy_sse::LegacySseWorker;
+        use rmcp::transport::worker::WorkerTransport;
+
+        let worker = LegacySseWorker::from_url(url.as_str())
+            .map_err(|e| anyhow!("Invalid SSE URL: {}", e))?;
+        let transport = WorkerTransport::spawn(worker);
 
         let service = ().serve(transport)
             .await
-            .context("Failed to initialize SSE MCP client")?;
+            .context("Failed to initialize legacy SSE MCP client")?;
 
         *self.service.lock().await = Some(service);
         Ok(())

@@ -172,8 +172,8 @@ onMounted(async () => {
           <button v-for="(label, type) in TRANSPORT_LABELS" :key="type" type="button"
             @click="form.transport_type = type as TransportType"
             class="px-3 py-2.5 rounded-lg text-sm font-medium border transition-colors text-center" :class="form.transport_type === type
-                ? 'bg-surface-900 text-white border-surface-900'
-                : 'bg-white text-surface-600 border-surface-300 hover:bg-surface-50'
+              ? 'bg-surface-900 text-white border-surface-900'
+              : 'bg-white text-surface-600 border-surface-300 hover:bg-surface-50'
               ">
             {{ label }}
           </button>

@@ -27,21 +27,20 @@ impl McpManager {
         let configs: Vec<McpServerConfig> = self.config.mcps.clone();
 
         for mcp_config in configs {
-            if !mcp_config.enabled {
-                tracing::info!("MCP '{}' is disabled, skipping", mcp_config.name);
-                continue;
-            }
-
             let id = mcp_config.id.clone();
             let conn = Arc::new(McpConnection::new(mcp_config));
 
-            match conn.connect().await {
-                Ok(()) => {
-                    tracing::info!("MCP '{}' connected successfully", conn.config.name);
+            if conn.config.enabled {
+                match conn.connect().await {
+                    Ok(()) => {
+                        tracing::info!("MCP '{}' connected successfully", conn.config.name);
+                    }
+                    Err(e) => {
+                        tracing::warn!("MCP '{}' failed to connect: {}", conn.config.name, e);
+                    }
                 }
-                Err(e) => {
-                    tracing::warn!("MCP '{}' failed to connect: {}", conn.config.name, e);
-                }
+            } else {
+                tracing::info!("MCP '{}' is disabled, skipping connection", conn.config.name);
             }
 
             self.connections.insert(id, conn);
