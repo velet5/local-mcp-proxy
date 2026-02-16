@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useMcpStore } from "@/stores/mcpStore";
 import { TransportType, TRANSPORT_LABELS } from "@/types";
@@ -144,22 +144,10 @@ onMounted(async () => {
 <template>
   <div class="p-6 max-w-2xl mx-auto">
     <!-- Back -->
-    <button
-      @click="router.push('/')"
-      class="inline-flex items-center gap-1.5 text-sm text-surface-500 hover:text-surface-800 mb-4 transition-colors"
-    >
-      <svg
-        class="w-4 h-4"
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
-      >
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width="2"
-          d="M15 19l-7-7 7-7"
-        />
+    <button @click="router.push('/')"
+      class="inline-flex items-center gap-1.5 text-sm text-surface-500 hover:text-surface-800 mb-4 transition-colors">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
       </svg>
       Back to Dashboard
     </button>
@@ -168,125 +156,73 @@ onMounted(async () => {
       {{ isEditing ? "Edit MCP" : "Add New MCP" }}
     </h1>
 
-    <form
-      @submit.prevent="handleSubmit"
-      class="bg-white rounded-lg border border-surface-200 divide-y divide-surface-100"
-    >
+    <form @submit.prevent="handleSubmit"
+      class="bg-white rounded-lg border border-surface-200 divide-y divide-surface-100">
       <!-- Name -->
       <div class="p-5">
-        <label class="block text-sm font-medium text-surface-700 mb-1.5"
-          >Name *</label
-        >
-        <input
-          v-model="form.name"
-          type="text"
-          placeholder="My MCP Server"
-          class="w-full px-3 py-2 border border-surface-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-surface-900 focus:border-transparent"
-        />
+        <label class="block text-sm font-medium text-surface-700 mb-1.5">Name *</label>
+        <input v-model="form.name" type="text" placeholder="My MCP Server"
+          class="w-full px-3 py-2 border border-surface-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-surface-900 focus:border-transparent" />
       </div>
 
       <!-- Transport type -->
       <div class="p-5">
-        <label class="block text-sm font-medium text-surface-700 mb-1.5"
-          >Transport Type *</label
-        >
+        <label class="block text-sm font-medium text-surface-700 mb-1.5">Transport Type *</label>
         <div class="grid grid-cols-3 gap-2">
-          <button
-            v-for="(label, type) in TRANSPORT_LABELS"
-            :key="type"
-            type="button"
+          <button v-for="(label, type) in TRANSPORT_LABELS" :key="type" type="button"
             @click="form.transport_type = type as TransportType"
-            class="px-3 py-2.5 rounded-lg text-sm font-medium border transition-colors text-center"
-            :class="
-              form.transport_type === type
+            class="px-3 py-2.5 rounded-lg text-sm font-medium border transition-colors text-center" :class="form.transport_type === type
                 ? 'bg-surface-900 text-white border-surface-900'
                 : 'bg-white text-surface-600 border-surface-300 hover:bg-surface-50'
-            "
-          >
+              ">
             {{ label }}
           </button>
         </div>
       </div>
 
       <!-- Stdio fields -->
-      <div
-        v-if="form.transport_type === TransportType.Stdio"
-        class="p-5 space-y-4"
-      >
+      <div v-if="form.transport_type === TransportType.Stdio" class="p-5 space-y-4">
         <div>
-          <label class="block text-sm font-medium text-surface-700 mb-1.5"
-            >Command *</label
-          >
-          <input
-            v-model="form.command"
-            type="text"
-            placeholder="npx -y @modelcontextprotocol/server-everything"
-            class="w-full px-3 py-2 border border-surface-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-surface-900 focus:border-transparent"
-          />
+          <label class="block text-sm font-medium text-surface-700 mb-1.5">Command *</label>
+          <input v-model="form.command" type="text" placeholder="npx -y @modelcontextprotocol/server-everything"
+            class="w-full px-3 py-2 border border-surface-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-surface-900 focus:border-transparent" />
           <p class="text-xs text-surface-400 mt-1">
             The executable to run as an MCP server process.
           </p>
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-surface-700 mb-1.5"
-            >Arguments</label
-          >
-          <input
-            v-model="argsInput"
-            type="text"
-            placeholder="--port 3000 --verbose"
-            class="w-full px-3 py-2 border border-surface-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-surface-900 focus:border-transparent"
-          />
+          <label class="block text-sm font-medium text-surface-700 mb-1.5">Arguments</label>
+          <input v-model="argsInput" type="text" placeholder="--port 3000 --verbose"
+            class="w-full px-3 py-2 border border-surface-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-surface-900 focus:border-transparent" />
           <p class="text-xs text-surface-400 mt-1">
             Space-separated command arguments.
           </p>
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-surface-700 mb-1.5"
-            >Environment Variables</label
-          >
-          <textarea
-            v-model="envInput"
-            placeholder='{ "API_KEY": "sk-...", "DEBUG": "true" }'
-            rows="3"
-            class="w-full px-3 py-2 border border-surface-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-surface-900 focus:border-transparent resize-none"
-          ></textarea>
+          <label class="block text-sm font-medium text-surface-700 mb-1.5">Environment Variables</label>
+          <textarea v-model="envInput" placeholder='{ "API_KEY": "sk-...", "DEBUG": "true" }' rows="3"
+            class="w-full px-3 py-2 border border-surface-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-surface-900 focus:border-transparent resize-none"></textarea>
           <p class="text-xs text-surface-400 mt-1">JSON object of env vars.</p>
         </div>
       </div>
 
       <!-- HTTP/SSE fields -->
-      <div
-        v-if="
-          form.transport_type === TransportType.Sse ||
-          form.transport_type === TransportType.StreamableHttp
-        "
-        class="p-5 space-y-4"
-      >
+      <div v-if="
+        form.transport_type === TransportType.Sse ||
+        form.transport_type === TransportType.StreamableHttp
+      " class="p-5 space-y-4">
         <div>
-          <label class="block text-sm font-medium text-surface-700 mb-1.5"
-            >URL *</label
-          >
-          <input
-            v-model="form.url"
-            type="url"
-            placeholder="http://localhost:3000/sse"
-            class="w-full px-3 py-2 border border-surface-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-surface-900 focus:border-transparent"
-          />
+          <label class="block text-sm font-medium text-surface-700 mb-1.5">URL *</label>
+          <input v-model="form.url" type="url" placeholder="http://localhost:3000/mcp"
+            class="w-full px-3 py-2 border border-surface-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-surface-900 focus:border-transparent" />
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-surface-700 mb-1.5"
-            >Headers</label
-          >
-          <textarea
-            v-model="headersInput"
-            placeholder='{ "Authorization": "Bearer ..." }'
-            rows="3"
-            class="w-full px-3 py-2 border border-surface-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-surface-900 focus:border-transparent resize-none"
-          ></textarea>
+          <label class="block text-sm font-medium text-surface-700 mb-1.5">Headers</label>
+          <textarea v-model="headersInput" placeholder='{ "Authorization": "Bearer ..." }' rows="3"
+            class="w-full px-3 py-2 border border-surface-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-surface-900 focus:border-transparent resize-none"></textarea>
           <p class="text-xs text-surface-400 mt-1">JSON object of HTTP headers.</p>
         </div>
       </div>
@@ -294,15 +230,10 @@ onMounted(async () => {
       <!-- Enabled toggle -->
       <div class="p-5">
         <label class="flex items-center gap-3 cursor-pointer">
-          <input
-            v-model="form.enabled"
-            type="checkbox"
-            class="w-4 h-4 rounded border-surface-300 text-surface-900 focus:ring-surface-900"
-          />
+          <input v-model="form.enabled" type="checkbox"
+            class="w-4 h-4 rounded border-surface-300 text-surface-900 focus:ring-surface-900" />
           <div>
-            <span class="text-sm font-medium text-surface-700"
-              >Enabled</span
-            >
+            <span class="text-sm font-medium text-surface-700">Enabled</span>
             <p class="text-xs text-surface-400">
               Connect automatically on app start.
             </p>
@@ -311,27 +242,18 @@ onMounted(async () => {
       </div>
 
       <!-- Error -->
-      <div
-        v-if="formError"
-        class="mx-5 my-0 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700"
-      >
+      <div v-if="formError" class="mx-5 my-0 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
         {{ formError }}
       </div>
 
       <!-- Submit -->
       <div class="p-5 flex gap-3">
-        <button
-          type="submit"
-          :disabled="submitting"
-          class="flex-1 px-4 py-2.5 bg-surface-900 text-white rounded-lg text-sm font-medium hover:bg-surface-800 transition-colors disabled:opacity-50"
-        >
+        <button type="submit" :disabled="submitting"
+          class="flex-1 px-4 py-2.5 bg-surface-900 text-white rounded-lg text-sm font-medium hover:bg-surface-800 transition-colors disabled:opacity-50">
           {{ submitting ? "Saving..." : isEditing ? "Update MCP" : "Add MCP" }}
         </button>
-        <button
-          type="button"
-          @click="router.push('/')"
-          class="px-4 py-2.5 bg-surface-100 text-surface-700 rounded-lg text-sm font-medium hover:bg-surface-200 transition-colors"
-        >
+        <button type="button" @click="router.push('/')"
+          class="px-4 py-2.5 bg-surface-100 text-surface-700 rounded-lg text-sm font-medium hover:bg-surface-200 transition-colors">
           Cancel
         </button>
       </div>

@@ -185,7 +185,7 @@ impl McpManager {
     /// Get proxy URL for a specific MCP
     pub fn get_proxy_url(&self, id: &str) -> String {
         format!(
-            "http://127.0.0.1:{}/mcp/{}/sse",
+            "http://127.0.0.1:{}/mcp/{}",
             self.config.proxy_port, id
         )
     }

@@ -3,6 +3,7 @@ import Dashboard from "@/views/Dashboard.vue";
 import McpDetail from "@/views/McpDetail.vue";
 import AddMcp from "@/views/AddMcp.vue";
 import Settings from "@/views/Settings.vue";
+import Logs from "@/views/Logs.vue";
 
 const routes = [
   {
@@ -25,6 +26,11 @@ const routes = [
     path: "/settings",
     name: "Settings",
     component: Settings,
+  },
+  {
+    path: "/logs",
+    name: "Logs",
+    component: Logs,
   },
 ];
 

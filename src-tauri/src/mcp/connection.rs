@@ -109,8 +109,13 @@ impl McpConnection {
                 Ok(())
             }
             Err(e) => {
-                let msg = format!("{}", e);
-                self.set_error(msg.clone()).await;
+                let detailed = format!("{:#}", e);
+                tracing::error!(
+                    "MCP '{}': connect failed: {}",
+                    self.config.name,
+                    detailed
+                );
+                self.set_error(detailed).await;
                 self.set_state(ConnectionState::Error).await;
                 Err(e)
             }
@@ -159,13 +164,6 @@ impl McpConnection {
                 cmd.env(key, value);
             }
         }
-
-        // Ensure PATH includes common locations for npx/node (GUI apps on macOS often don't inherit shell PATH)
-        let path = std::env::var("PATH").unwrap_or_default();
-        cmd.env(
-            "PATH",
-            format!("/usr/local/bin:/opt/homebrew/bin:{}", path),
-        );
 
         let full_cmd = format!("{} {}", executable, args.join(" "))
             .trim_end()
@@ -322,35 +320,6 @@ impl McpConnection {
         self.set_state(ConnectionState::Disconnected).await;
     }
 
-    /// Forward a JSON-RPC message to the MCP server
-    pub async fn call_tool(
-        &self,
-        name: &str,
-        arguments: serde_json::Value,
-    ) -> Result<serde_json::Value> {
-        let service_lock = self.service.lock().await;
-        let service = service_lock
-            .as_ref()
-            .ok_or_else(|| anyhow!("Not connected"))?;
-
-        let args_map = match arguments {
-            serde_json::Value::Object(map) => Some(map),
-            _ => None,
-        };
-
-        let result = service
-            .call_tool(CallToolRequestParams {
-                meta: None,
-                name: name.to_string().into(),
-                arguments: args_map,
-                task: None,
-            })
-            .await
-            .context("Tool call failed")?;
-
-        serde_json::to_value(&result).context("Failed to serialize tool result")
-    }
-
     /// Get current status snapshot
     pub async fn status(&self, proxy_port: u16) -> McpStatus {
         let state = *self.state.lock().await;
@@ -369,7 +338,7 @@ impl McpConnection {
 
         let proxy_url = if state == ConnectionState::Connected {
             Some(format!(
-                "http://127.0.0.1:{}/mcp/{}/sse",
+                "http://127.0.0.1:{}/mcp/{}",
                 proxy_port, self.config.id
             ))
         } else {
@@ -399,6 +368,105 @@ impl McpConnection {
     /// Get cached resources
     pub async fn get_resources(&self) -> Vec<Resource> {
         self.resources.lock().await.clone()
+    }
+
+    /// Execute a JSON-RPC method against the underlying MCP server.
+    /// Returns the `result` value on success (not the full JSON-RPC envelope).
+    pub async fn execute_request(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let service_lock = self.service.lock().await;
+        let service = service_lock
+            .as_ref()
+            .ok_or_else(|| anyhow!("Not connected"))?;
+
+        let result = match method {
+            "ping" => {
+                // rmcp doesn't expose a dedicated ping; use list_tools as a lightweight check
+                let _ = service.list_tools(Default::default()).await.context("ping failed")?;
+                serde_json::json!({})
+            }
+            "tools/list" => {
+                let result = service
+                    .list_tools(Default::default())
+                    .await
+                    .context("tools/list failed")?;
+                serde_json::to_value(&result)?
+            }
+            "tools/call" => {
+                let tool_params: CallToolRequestParams = serde_json::from_value(params)
+                    .context("Invalid tools/call params")?;
+                let result = service
+                    .call_tool(tool_params)
+                    .await
+                    .context("tools/call failed")?;
+                serde_json::to_value(&result)?
+            }
+            "resources/list" => {
+                let result = service
+                    .list_resources(Default::default())
+                    .await
+                    .context("resources/list failed")?;
+                serde_json::to_value(&result)?
+            }
+            "resources/read" => {
+                let read_params = serde_json::from_value(params)
+                    .context("Invalid resources/read params")?;
+                let result = service
+                    .read_resource(read_params)
+                    .await
+                    .context("resources/read failed")?;
+                serde_json::to_value(&result)?
+            }
+            "resources/templates/list" => {
+                let result = service
+                    .list_resource_templates(Default::default())
+                    .await
+                    .context("resources/templates/list failed")?;
+                serde_json::to_value(&result)?
+            }
+            "prompts/list" => {
+                let result = service
+                    .list_prompts(Default::default())
+                    .await
+                    .context("prompts/list failed")?;
+                serde_json::to_value(&result)?
+            }
+            "prompts/get" => {
+                let prompt_params = serde_json::from_value(params)
+                    .context("Invalid prompts/get params")?;
+                let result = service
+                    .get_prompt(prompt_params)
+                    .await
+                    .context("prompts/get failed")?;
+                serde_json::to_value(&result)?
+            }
+            "completion/complete" => {
+                let complete_params = serde_json::from_value(params)
+                    .context("Invalid completion/complete params")?;
+                let result = service
+                    .complete(complete_params)
+                    .await
+                    .context("completion/complete failed")?;
+                serde_json::to_value(&result)?
+            }
+            "logging/setLevel" => {
+                let level_params = serde_json::from_value(params)
+                    .context("Invalid logging/setLevel params")?;
+                service
+                    .set_level(level_params)
+                    .await
+                    .context("logging/setLevel failed")?;
+                serde_json::json!({})
+            }
+            other => {
+                return Err(anyhow!("Method not found: {}", other));
+            }
+        };
+
+        Ok(result)
     }
 }
 

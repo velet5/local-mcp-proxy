@@ -66,6 +66,13 @@ export interface AppConfig {
   mcps: McpServerConfig[];
 }
 
+export interface LogEntry {
+  timestamp: string;
+  level: string;
+  target: string;
+  message: string;
+}
+
 export const CONNECTION_STATE_COLORS: Record<ConnectionState, string> = {
   [ConnectionState.Connected]: "emerald",
   [ConnectionState.Connecting]: "blue",

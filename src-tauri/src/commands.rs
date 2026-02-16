@@ -2,6 +2,8 @@ use crate::config::ConfigManager;
 use crate::mcp::manager::McpManager;
 use crate::types::*;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
+use std::collections::VecDeque;
 use tauri::State;
 use tokio::sync::Mutex;
 
@@ -9,6 +11,7 @@ use tokio::sync::Mutex;
 pub struct AppState {
     pub manager: Arc<Mutex<McpManager>>,
     pub config_manager: Arc<Mutex<ConfigManager>>,
+    pub log_store: Arc<StdMutex<VecDeque<LogEntry>>>,
 }
 
 /// Helper to persist config after any modification
@@ -128,4 +131,14 @@ pub async fn update_app_config(
     config_mgr.save(&full_config).map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+/// Get recent log entries
+#[tauri::command]
+pub async fn get_logs(state: State<'_, AppState>) -> Result<Vec<LogEntry>, String> {
+    let logs = state
+        .log_store
+        .lock()
+        .map_err(|_| "Log buffer unavailable".to_string())?;
+    Ok(logs.iter().cloned().collect())
 }

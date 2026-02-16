@@ -16,7 +16,19 @@ const detail = computed(() => store.details.get(id.value));
 const loading = ref(true);
 const proxyUrl = ref("");
 const copied = ref(false);
-const activeTab = ref<"tools" | "resources">("tools");
+const activeTab = ref<"tools" | "resources" | "logs">("tools");
+
+const errorSummary = computed(() => {
+  const message = detail.value?.status.error_message;
+  if (!message) return "";
+  return message.split("\n")[0] || message;
+});
+
+const filteredLogs = computed(() => {
+  return store.logs.filter(
+    (entry) => entry.level === "WARN" || entry.level === "ERROR",
+  );
+});
 
 async function loadDetail() {
   loading.value = true;
@@ -145,8 +157,8 @@ onMounted(loadDetail);
           </h2>
           <div class="flex items-center gap-3 mb-4">
             <StatusBadge :state="detail.status.state" />
-            <span v-if="detail.status.error_message" class="text-xs text-red-600">
-              {{ detail.status.error_message }}
+            <span v-if="errorSummary" class="text-xs text-red-600">
+              {{ errorSummary }}
             </span>
           </div>
           <div class="space-y-3 text-sm">
@@ -288,6 +300,19 @@ onMounted(loadDetail);
         </div>
       </div>
 
+      <!-- Error details -->
+      <div
+        v-if="detail.status.error_message"
+        class="mb-6 bg-red-50 border border-red-200 rounded-lg p-4"
+      >
+        <div class="text-xs font-semibold text-red-700 uppercase tracking-wider mb-2">
+          Error details
+        </div>
+        <pre class="text-xs text-red-800 whitespace-pre-wrap break-words">{{
+          detail.status.error_message
+        }}</pre>
+      </div>
+
       <!-- Tabs: Tools / Resources -->
       <div class="bg-white rounded-lg border border-surface-200">
         <div class="flex border-b border-surface-200">
@@ -313,6 +338,17 @@ onMounted(loadDetail);
           >
             Resources ({{ detail.resources.length }})
           </button>
+          <button
+            class="px-5 py-3 text-sm font-medium border-b-2 transition-colors"
+            :class="
+              activeTab === 'logs'
+                ? 'border-surface-900 text-surface-900'
+                : 'border-transparent text-surface-500 hover:text-surface-700'
+            "
+            @click="activeTab = 'logs'"
+          >
+            Logs ({{ filteredLogs.length }})
+          </button>
         </div>
         <div class="p-5">
           <ToolList v-if="activeTab === 'tools'" :tools="detail.tools" />
@@ -320,6 +356,46 @@ onMounted(loadDetail);
             v-if="activeTab === 'resources'"
             :resources="detail.resources"
           />
+          <div v-if="activeTab === 'logs'" class="space-y-2">
+            <div
+              v-if="filteredLogs.length === 0"
+              class="text-sm text-surface-500"
+            >
+              No warnings or errors yet.
+            </div>
+            <div
+              v-else
+              class="max-h-[360px] overflow-auto rounded-lg border border-surface-200"
+            >
+              <div
+                v-for="(entry, index) in filteredLogs"
+                :key="`${entry.timestamp}-${index}`"
+                class="border-b border-surface-200 last:border-b-0 p-3"
+              >
+                <div class="flex items-center justify-between mb-1">
+                  <span
+                    class="text-[10px] font-semibold uppercase tracking-wider"
+                    :class="
+                      entry.level === 'ERROR'
+                        ? 'text-red-700'
+                        : 'text-amber-700'
+                    "
+                  >
+                    {{ entry.level }}
+                  </span>
+                  <span class="text-[10px] text-surface-400">
+                    {{ new Date(entry.timestamp).toLocaleString() }}
+                  </span>
+                </div>
+                <div class="text-xs text-surface-700 whitespace-pre-wrap break-words">
+                  {{ entry.message }}
+                </div>
+                <div class="text-[10px] text-surface-400 mt-1">
+                  {{ entry.target }}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </template>

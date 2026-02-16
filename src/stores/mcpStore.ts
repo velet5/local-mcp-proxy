@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { ref, computed } from "vue";
+import { ref, computed, onScopeDispose } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
@@ -7,6 +7,7 @@ import type {
   McpDetail,
   McpServerConfig,
   AppConfig,
+  LogEntry,
 } from "@/types";
 import { ConnectionState } from "@/types";
 
@@ -18,30 +19,32 @@ export const useMcpStore = defineStore("mcp", () => {
   const loading = ref(false);
   const error = ref<string | null>(null);
   const initialized = ref(false);
+  const logs = ref<LogEntry[]>([]);
 
   // Computed
   const totalCount = computed(() => statuses.value.length);
 
   const connectedCount = computed(
     () =>
-      statuses.value.filter((s) => s.state === ConnectionState.Connected).length
+      statuses.value.filter((s) => s.state === ConnectionState.Connected)
+        .length,
   );
 
   const errorCount = computed(
     () =>
-      statuses.value.filter((s) => s.state === ConnectionState.Error).length
+      statuses.value.filter((s) => s.state === ConnectionState.Error).length,
   );
 
   const reconnectingCount = computed(
     () =>
       statuses.value.filter((s) => s.state === ConnectionState.Reconnecting)
-        .length
+        .length,
   );
 
   const disconnectedCount = computed(
     () =>
       statuses.value.filter((s) => s.state === ConnectionState.Disconnected)
-        .length
+        .length,
   );
 
   const getMcpById = computed(() => {
@@ -112,6 +115,14 @@ export const useMcpStore = defineStore("mcp", () => {
     }
   }
 
+  async function fetchLogs() {
+    try {
+      logs.value = await invoke<LogEntry[]>("get_logs");
+    } catch (e) {
+      error.value = `Failed to fetch logs: ${e}`;
+    }
+  }
+
   async function updateAppConfig(config: AppConfig) {
     await invoke("update_app_config", { config });
     appConfig.value = config;
@@ -124,16 +135,29 @@ export const useMcpStore = defineStore("mcp", () => {
 
     await fetchStatuses();
     await fetchAppConfig();
+    await fetchLogs();
 
     // Listen for real-time status updates from the Rust backend
     listen<McpStatus[]>("mcp-statuses-changed", (event) => {
       statuses.value = event.payload;
     });
 
+    listen<LogEntry>("log-entry", (event) => {
+      logs.value.push(event.payload);
+      if (logs.value.length > 500) {
+        logs.value.shift();
+      }
+    });
+
     // Also poll every 10s as a fallback
-    setInterval(() => {
+    const pollIntervalId = setInterval(() => {
       fetchStatuses();
     }, 10000);
+
+    // Clean up interval on store disposal
+    onScopeDispose(() => {
+      clearInterval(pollIntervalId);
+    });
   }
 
   return {
@@ -143,6 +167,7 @@ export const useMcpStore = defineStore("mcp", () => {
     appConfig,
     loading,
     error,
+    logs,
     // Computed
     totalCount,
     connectedCount,
@@ -161,6 +186,7 @@ export const useMcpStore = defineStore("mcp", () => {
     disconnectMcp,
     getProxyUrl,
     fetchAppConfig,
+    fetchLogs,
     updateAppConfig,
   };
 });

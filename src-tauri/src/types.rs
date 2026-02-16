@@ -111,6 +111,15 @@ pub struct AppConfig {
     pub mcps: Vec<McpServerConfig>,
 }
 
+/// Log entry captured from tracing
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogEntry {
+    pub timestamp: String,
+    pub level: String,
+    pub target: String,
+    pub message: String,
+}
+
 fn default_proxy_port() -> u16 {
     3001
 }
