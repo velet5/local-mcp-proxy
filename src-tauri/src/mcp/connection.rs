@@ -11,6 +11,107 @@ use std::time::{Duration, SystemTime};
 use tokio::process::Command;
 use tokio::sync::Mutex;
 
+/// A wrapper around `reqwest::Client` that tolerates servers returning 404
+/// (or other non-405 errors) on DELETE session requests.  The upstream rmcp
+/// library only treats 405 as "not supported" and logs everything else at
+/// `error` level.  Many real-world servers (especially behind reverse proxies)
+/// return 404 for DELETE, so we handle that gracefully here.
+#[derive(Clone)]
+struct GracefulHttpClient(reqwest::Client);
+
+impl rmcp::transport::streamable_http_client::StreamableHttpClient for GracefulHttpClient {
+    type Error = reqwest::Error;
+
+    fn post_message(
+        &self,
+        uri: Arc<str>,
+        message: rmcp::model::ClientJsonRpcMessage,
+        session_id: Option<Arc<str>>,
+        auth_header: Option<String>,
+    ) -> impl std::future::Future<
+        Output = std::result::Result<
+            rmcp::transport::streamable_http_client::StreamableHttpPostResponse,
+            rmcp::transport::streamable_http_client::StreamableHttpError<Self::Error>,
+        >,
+    > + Send + '_ {
+        // Delegate directly to the inner reqwest::Client impl
+        rmcp::transport::streamable_http_client::StreamableHttpClient::post_message(
+            &self.0,
+            uri,
+            message,
+            session_id,
+            auth_header,
+        )
+    }
+
+    fn get_stream(
+        &self,
+        uri: Arc<str>,
+        session_id: Arc<str>,
+        last_event_id: Option<String>,
+        auth_header: Option<String>,
+    ) -> impl std::future::Future<
+        Output = std::result::Result<
+            futures::stream::BoxStream<'static, std::result::Result<sse_stream::Sse, sse_stream::Error>>,
+            rmcp::transport::streamable_http_client::StreamableHttpError<Self::Error>,
+        >,
+    > + Send + '_ {
+        rmcp::transport::streamable_http_client::StreamableHttpClient::get_stream(
+            &self.0,
+            uri,
+            session_id,
+            last_event_id,
+            auth_header,
+        )
+    }
+
+    async fn delete_session(
+        &self,
+        uri: Arc<str>,
+        session: Arc<str>,
+        auth_token: Option<String>,
+    ) -> std::result::Result<(), rmcp::transport::streamable_http_client::StreamableHttpError<Self::Error>>
+    {
+        use rmcp::transport::common::http_header::HEADER_SESSION_ID;
+
+        let mut request_builder = self.0.delete(uri.as_ref());
+        if let Some(auth_header) = auth_token {
+            request_builder = request_builder.bearer_auth(auth_header);
+        }
+        let response = request_builder
+            .header(HEADER_SESSION_ID, session.as_ref())
+            .send()
+            .await
+            .map_err(rmcp::transport::streamable_http_client::StreamableHttpError::Client)?;
+
+        let status = response.status();
+        if status.is_success() || status == reqwest::StatusCode::METHOD_NOT_ALLOWED {
+            // 2xx or 405 — fine
+        } else if status == reqwest::StatusCode::NOT_FOUND
+            || status == reqwest::StatusCode::BAD_REQUEST
+        {
+            // 404 / 400 — server doesn't recognise the session or the endpoint;
+            // treat as a benign "not supported" rather than a hard error.
+            tracing::debug!(
+                %status,
+                session_id = session.as_ref(),
+                "server returned {} on session delete, treating as unsupported",
+                status,
+            );
+        } else {
+            // Other errors (5xx, etc.) — still log, but at warn, not error.
+            tracing::warn!(
+                %status,
+                session_id = session.as_ref(),
+                "unexpected status on session delete: {}",
+                status,
+            );
+        }
+
+        Ok(())
+    }
+}
+
 /// Represents a single MCP server connection
 pub struct McpConnection {
     pub config: McpServerConfig,
@@ -258,7 +359,7 @@ impl McpConnection {
             .context("Failed to build HTTP client")?;
 
         let config = StreamableHttpClientTransportConfig::with_uri(url.as_str());
-        let transport = StreamableHttpClientTransport::with_client(client, config);
+        let transport = StreamableHttpClientTransport::with_client(GracefulHttpClient(client), config);
 
         let service = ().serve(transport)
             .await
