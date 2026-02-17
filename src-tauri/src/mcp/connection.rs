@@ -7,7 +7,7 @@ use rmcp::RoleClient;
 use rmcp::ServiceExt;
 use std::process::Stdio;
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 use tokio::process::Command;
 use tokio::sync::Mutex;
 
@@ -196,8 +196,18 @@ impl McpConnection {
         use crate::mcp::legacy_sse::LegacySseWorker;
         use rmcp::transport::worker::WorkerTransport;
 
-        let worker = LegacySseWorker::from_url(url.as_str())
+        let mut worker = LegacySseWorker::from_url(url.as_str())
             .map_err(|e| anyhow!("Invalid SSE URL: {}", e))?;
+
+        // Pass custom headers from config (e.g. Authorization)
+        if let Some(headers) = &self.config.headers {
+            let header_vec: Vec<(String, String)> = headers
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            worker = worker.with_headers(header_vec);
+        }
+
         let transport = WorkerTransport::spawn(worker);
 
         let service = ().serve(transport)
@@ -217,7 +227,38 @@ impl McpConnection {
             .ok_or_else(|| anyhow!("No URL specified for HTTP transport"))?;
 
         use rmcp::transport::StreamableHttpClientTransport;
-        let transport = StreamableHttpClientTransport::from_uri(url.as_str());
+        use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
+
+        // Build a custom reqwest client with headers and no overall timeout
+        // (the SSE stream is long-lived so we can't set a global timeout).
+        // No read_timeout or timeout — SSE streams are long-lived and must not be killed.
+        // reqwest has no read timeout by default, which is what we want.
+        let mut client_builder = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(30))
+            .pool_idle_timeout(Duration::from_secs(90));
+
+        // Apply custom headers from config (e.g. Authorization, cookies, etc.)
+        if let Some(headers) = &self.config.headers {
+            let mut header_map = reqwest::header::HeaderMap::new();
+            for (key, value) in headers {
+                if let (Ok(name), Ok(val)) = (
+                    reqwest::header::HeaderName::from_bytes(key.as_bytes()),
+                    reqwest::header::HeaderValue::from_str(value),
+                ) {
+                    header_map.insert(name, val);
+                } else {
+                    tracing::warn!("MCP '{}': skipping invalid header: {}", self.config.name, key);
+                }
+            }
+            client_builder = client_builder.default_headers(header_map);
+        }
+
+        let client = client_builder
+            .build()
+            .context("Failed to build HTTP client")?;
+
+        let config = StreamableHttpClientTransportConfig::with_uri(url.as_str());
+        let transport = StreamableHttpClientTransport::with_client(client, config);
 
         let service = ().serve(transport)
             .await

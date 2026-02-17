@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useMcpStore } from "@/stores/mcpStore";
 import { TransportType, TRANSPORT_LABELS } from "@/types";
 import type { McpServerConfig } from "@/types";
+import KeyValueEditor from "@/components/KeyValueEditor.vue";
 
 const route = useRoute();
 const router = useRouter();
@@ -25,8 +26,14 @@ const form = ref<McpServerConfig>({
 });
 
 const argsInput = ref("");
-const envInput = ref("");
-const headersInput = ref("");
+const envMap = ref<Record<string, string>>({});
+const headersMap = ref<Record<string, string>>({});
+
+// Auth fields for HTTP transports
+const authType = ref<"none" | "basic">("none");
+const authUser = ref("");
+const authPass = ref("");
+
 const submitting = ref(false);
 const formError = ref("");
 
@@ -35,14 +42,56 @@ function generateId(): string {
   return crypto.randomUUID().slice(0, 8);
 }
 
+// Check if transport is HTTP-based
+const isHttpTransport = computed(
+  () =>
+    form.value.transport_type === TransportType.Sse ||
+    form.value.transport_type === TransportType.StreamableHttp
+);
+
+// Sync auth fields from headers when loading
+function syncAuthFromHeaders(headers: Record<string, string>) {
+  const authHeader = Object.entries(headers).find(
+    ([k]) => k.toLowerCase() === "authorization"
+  );
+  if (authHeader) {
+    const val = authHeader[1];
+    if (val.toLowerCase().startsWith("basic ")) {
+      authType.value = "basic";
+      try {
+        const decoded = atob(val.slice(6));
+        const colonIdx = decoded.indexOf(":");
+        if (colonIdx >= 0) {
+          authUser.value = decoded.slice(0, colonIdx);
+          authPass.value = decoded.slice(colonIdx + 1);
+        }
+      } catch {
+        // If decoding fails, keep raw
+        authUser.value = "";
+        authPass.value = "";
+      }
+    } else {
+      authType.value = "none";
+    }
+    // Remove Authorization from headersMap so it's not duplicated
+    const cleaned: Record<string, string> = {};
+    for (const [k, v] of Object.entries(headers)) {
+      if (k.toLowerCase() !== "authorization") cleaned[k] = v;
+    }
+    headersMap.value = cleaned;
+  }
+}
+
 // Validate form before submission
 function validate(): string | null {
   if (!form.value.name.trim()) return "Name is required.";
 
   if (form.value.transport_type === TransportType.Stdio) {
-    if (!form.value.command?.trim()) return "Command is required for Stdio transport.";
+    if (!form.value.command?.trim())
+      return "Command is required for Stdio transport.";
   } else {
-    if (!form.value.url?.trim()) return "URL is required for this transport type.";
+    if (!form.value.url?.trim())
+      return "URL is required for this transport type.";
     try {
       new URL(form.value.url!);
     } catch {
@@ -50,21 +99,19 @@ function validate(): string | null {
     }
   }
 
-  if (envInput.value.trim()) {
-    try {
-      JSON.parse(envInput.value);
-    } catch {
-      return "Environment variables must be valid JSON.";
-    }
-  }
+  // Check for duplicate keys in env
+  const envKeys = Object.keys(envMap.value);
+  if (new Set(envKeys).size !== envKeys.length)
+    return "Duplicate environment variable keys.";
 
-  if (headersInput.value.trim()) {
-    try {
-      JSON.parse(headersInput.value);
-    } catch {
-      return "Headers must be valid JSON.";
-    }
-  }
+  // Check for duplicate keys in headers
+  const headerKeys = Object.keys(headersMap.value);
+  if (new Set(headerKeys).size !== headerKeys.length)
+    return "Duplicate header keys.";
+
+  // Validate basic auth fields
+  if (authType.value === "basic" && !authUser.value.trim())
+    return "Username is required for Basic auth.";
 
   return null;
 }
@@ -88,19 +135,16 @@ async function handleSubmit() {
       form.value.args = [];
     }
 
-    // Parse env
-    if (envInput.value.trim()) {
-      form.value.env = JSON.parse(envInput.value);
-    } else {
-      form.value.env = {};
-    }
+    // Set env from key-value map
+    form.value.env = { ...envMap.value };
 
-    // Parse headers
-    if (headersInput.value.trim()) {
-      form.value.headers = JSON.parse(headersInput.value);
-    } else {
-      form.value.headers = {};
+    // Build headers from key-value map + auth
+    const finalHeaders: Record<string, string> = { ...headersMap.value };
+    if (isHttpTransport.value && authType.value === "basic") {
+      finalHeaders["Authorization"] =
+        "Basic " + btoa(authUser.value + ":" + authPass.value);
     }
+    form.value.headers = finalHeaders;
 
     // Auto-generate ID for new MCPs
     if (!isEditing.value && !form.value.id) {
@@ -121,6 +165,21 @@ async function handleSubmit() {
   }
 }
 
+// Reset auth when switching away from HTTP
+watch(
+  () => form.value.transport_type,
+  (newType) => {
+    if (
+      newType !== TransportType.Sse &&
+      newType !== TransportType.StreamableHttp
+    ) {
+      authType.value = "none";
+      authUser.value = "";
+      authPass.value = "";
+    }
+  }
+);
+
 // Load existing MCP data when editing
 onMounted(async () => {
   if (editId.value) {
@@ -128,14 +187,14 @@ onMounted(async () => {
     if (detail) {
       form.value = { ...detail.config };
       argsInput.value = (form.value.args || []).join(" ");
-      envInput.value =
-        form.value.env && Object.keys(form.value.env).length > 0
-          ? JSON.stringify(form.value.env, null, 2)
-          : "";
-      headersInput.value =
-        form.value.headers && Object.keys(form.value.headers).length > 0
-          ? JSON.stringify(form.value.headers, null, 2)
-          : "";
+      envMap.value = { ...(form.value.env || {}) };
+
+      const hdrs = { ...(form.value.headers || {}) };
+      syncAuthFromHeaders(hdrs);
+      // If no auth was detected, just use all headers
+      if (authType.value === "none") {
+        headersMap.value = hdrs;
+      }
     }
   }
 });
@@ -202,28 +261,74 @@ onMounted(async () => {
 
         <div>
           <label class="block text-sm font-medium text-surface-700 mb-1.5">Environment Variables</label>
-          <textarea v-model="envInput" placeholder='{ "API_KEY": "sk-...", "DEBUG": "true" }' rows="3"
-            class="w-full px-3 py-2 border border-surface-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-surface-900 focus:border-transparent resize-none"></textarea>
-          <p class="text-xs text-surface-400 mt-1">JSON object of env vars.</p>
+          <KeyValueEditor
+            v-model="envMap"
+            key-placeholder="VARIABLE"
+            value-placeholder="value"
+            :default-hidden-keys="['key', 'secret', 'token', 'password', 'auth']"
+          />
         </div>
       </div>
 
       <!-- HTTP/SSE fields -->
-      <div v-if="
-        form.transport_type === TransportType.Sse ||
-        form.transport_type === TransportType.StreamableHttp
-      " class="p-5 space-y-4">
+      <div v-if="isHttpTransport" class="p-5 space-y-4">
         <div>
           <label class="block text-sm font-medium text-surface-700 mb-1.5">URL *</label>
           <input v-model="form.url" type="url" placeholder="http://localhost:3000/mcp"
             class="w-full px-3 py-2 border border-surface-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-surface-900 focus:border-transparent" />
         </div>
 
+        <!-- Auth section -->
+        <div>
+          <label class="block text-sm font-medium text-surface-700 mb-1.5">Authentication</label>
+          <div class="flex gap-2 mb-3">
+            <button
+              type="button"
+              @click="authType = 'none'"
+              class="px-3 py-1.5 rounded-md text-xs font-medium border transition-colors"
+              :class="authType === 'none'
+                ? 'bg-surface-900 text-white border-surface-900'
+                : 'bg-white text-surface-600 border-surface-300 hover:bg-surface-50'"
+            >
+              None
+            </button>
+            <button
+              type="button"
+              @click="authType = 'basic'"
+              class="px-3 py-1.5 rounded-md text-xs font-medium border transition-colors"
+              :class="authType === 'basic'
+                ? 'bg-surface-900 text-white border-surface-900'
+                : 'bg-white text-surface-600 border-surface-300 hover:bg-surface-50'"
+            >
+              Basic
+            </button>
+          </div>
+
+          <!-- Basic auth fields -->
+          <div v-if="authType === 'basic'" class="space-y-2 mb-3">
+            <input
+              v-model="authUser"
+              type="text"
+              placeholder="Username"
+              class="w-full px-3 py-2 border border-surface-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-surface-900 focus:border-transparent"
+            />
+            <input
+              v-model="authPass"
+              type="password"
+              placeholder="Password"
+              class="w-full px-3 py-2 border border-surface-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-surface-900 focus:border-transparent"
+            />
+          </div>
+        </div>
+
         <div>
           <label class="block text-sm font-medium text-surface-700 mb-1.5">Headers</label>
-          <textarea v-model="headersInput" placeholder='{ "Authorization": "Bearer ..." }' rows="3"
-            class="w-full px-3 py-2 border border-surface-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-surface-900 focus:border-transparent resize-none"></textarea>
-          <p class="text-xs text-surface-400 mt-1">JSON object of HTTP headers.</p>
+          <KeyValueEditor
+            v-model="headersMap"
+            key-placeholder="Header"
+            value-placeholder="value"
+            :default-hidden-keys="['authorization', 'token', 'secret', 'key', 'password', 'auth']"
+          />
         </div>
       </div>
 
