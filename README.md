@@ -4,6 +4,23 @@
 
 A simple desktop app to manage multiple MCP (Model Context Protocol) servers in one place.
 
+## Screenshots
+
+### Dashboard
+Monitor all your MCP servers at a glance — see connection status, tool/resource counts, and uptime.
+
+![Dashboard](screenshots/dashboard.png)
+
+### Server Details
+Inspect a connected server's tools, resources, and logs. Copy proxy endpoints and push configs to Claude Desktop.
+
+![Server Detail](screenshots/server-detail.png)
+
+### Add Server
+Configure new MCP servers with support for Stdio, SSE, and Streamable HTTP transports, custom headers, and authentication.
+
+![Add Server](screenshots/add-server.png)
+
 ## What it does
 
 - Add and manage multiple MCP servers
