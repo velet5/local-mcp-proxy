@@ -4,10 +4,19 @@ version = "0.1.0"
 description = "A centralized MCP server manager for macOS"
 authors = ["you"]
 edition = "2021"
+default-run = "mcp-hub"
 
 [lib]
 name = "mcp_hub_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
+
+[[bin]]
+name = "mcp-hub"
+path = "src/main.rs"
+
+[[bin]]
+name = "mcp-hub-bridge"
+path = "src/bin/mcp-hub-bridge.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

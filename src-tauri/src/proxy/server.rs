@@ -123,12 +123,13 @@ async fn streamable_http_post(
 ) -> Result<axum::response::Response, StatusCode> {
     let mgr = state.manager.lock().await;
     let conn = mgr.get_connection(&id).ok_or(StatusCode::NOT_FOUND)?;
+    let disabled = mgr.get_disabled_items(&id);
 
     // Batch request
     if let Some(requests) = body.as_array() {
         let mut responses = Vec::new();
         for req in requests {
-            if let Some(resp) = handle_single_request(req, &conn).await {
+            if let Some(resp) = handle_single_request(req, &conn, &disabled).await {
                 responses.push(resp);
             }
         }
@@ -139,7 +140,7 @@ async fn streamable_http_post(
     }
 
     // Single request
-    match handle_single_request(&body, &conn).await {
+    match handle_single_request(&body, &conn, &disabled).await {
         Some(resp) => Ok(Json(resp).into_response()),
         None => Ok(StatusCode::ACCEPTED.into_response()),
     }
@@ -163,6 +164,7 @@ async fn streamable_http_delete(
 async fn handle_single_request(
     request: &serde_json::Value,
     conn: &McpConnection,
+    disabled: &(Vec<String>, Vec<String>),
 ) -> Option<serde_json::Value> {
     let method = request.get("method")?.as_str()?;
     let params = request
@@ -189,7 +191,7 @@ async fn handle_single_request(
                     "prompts": { "listChanged": false }
                 },
                 "serverInfo": {
-                    "name": "MCP Hub Proxy",
+                    "name": "Local MCP Proxy",
                     "version": "0.1.0"
                 }
             }
@@ -198,11 +200,35 @@ async fn handle_single_request(
 
     // Forward everything else to the underlying MCP server
     match conn.execute_request(method, params).await {
-        Ok(result) => Some(serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "result": result
-        })),
+        Ok(mut result) => {
+            // Filter disabled tools from tools/list responses
+            if method == "tools/list" {
+                if let Some(tools) = result.get_mut("tools").and_then(|t| t.as_array_mut()) {
+                    tools.retain(|t| {
+                        t.get("name")
+                            .and_then(|n| n.as_str())
+                            .map(|name| !disabled.0.contains(&name.to_string()))
+                            .unwrap_or(true)
+                    });
+                }
+            }
+            // Filter disabled resources from resources/list responses
+            if method == "resources/list" {
+                if let Some(resources) = result.get_mut("resources").and_then(|r| r.as_array_mut()) {
+                    resources.retain(|r| {
+                        r.get("uri")
+                            .and_then(|u| u.as_str())
+                            .map(|uri| !disabled.1.contains(&uri.to_string()))
+                            .unwrap_or(true)
+                    });
+                }
+            }
+            Some(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": result
+            }))
+        }
         Err(e) => {
             let code = if e.to_string().contains("Method not found") {
                 -32601 // Method not found
@@ -232,7 +258,13 @@ async fn list_tools(
 ) -> Result<impl IntoResponse, StatusCode> {
     let mgr = state.manager.lock().await;
     let conn = mgr.get_connection(&id).ok_or(StatusCode::NOT_FOUND)?;
-    let tools = conn.get_tools().await;
+    let (disabled_tools, _) = mgr.get_disabled_items(&id);
+    let tools: Vec<_> = conn
+        .get_tools()
+        .await
+        .into_iter()
+        .filter(|t| !disabled_tools.contains(&t.name))
+        .collect();
     Ok(Json(tools))
 }
 
@@ -243,6 +275,12 @@ async fn list_resources(
 ) -> Result<impl IntoResponse, StatusCode> {
     let mgr = state.manager.lock().await;
     let conn = mgr.get_connection(&id).ok_or(StatusCode::NOT_FOUND)?;
-    let resources = conn.get_resources().await;
+    let (_, disabled_resources) = mgr.get_disabled_items(&id);
+    let resources: Vec<_> = conn
+        .get_resources()
+        .await
+        .into_iter()
+        .filter(|r| !disabled_resources.contains(&r.uri))
+        .collect();
     Ok(Json(resources))
 }

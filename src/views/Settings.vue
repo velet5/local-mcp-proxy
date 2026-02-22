@@ -55,7 +55,7 @@ onMounted(loadConfig);
   <div class="p-6 max-w-2xl mx-auto">
     <h1 class="text-2xl font-bold text-surface-900 mb-1">Settings</h1>
     <p class="text-sm text-surface-500 mb-6">
-      Configure MCP Hub global settings.
+      Configure Local MCP Proxy global settings.
     </p>
 
     <div

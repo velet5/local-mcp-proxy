@@ -121,7 +121,7 @@ pub fn run() {
         .with(log_layer)
         .init();
 
-    tracing::info!("Starting MCP Hub");
+    tracing::info!("Starting Local MCP Proxy");
 
     let log_store = Arc::clone(&log_store);
     let log_emitter = Arc::clone(&log_emitter);
@@ -196,7 +196,7 @@ pub fn run() {
                 }
             });
 
-            tracing::info!("MCP Hub setup complete");
+            tracing::info!("Local MCP Proxy setup complete");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -207,10 +207,15 @@ pub fn run() {
             commands::remove_mcp,
             commands::connect_mcp,
             commands::disconnect_mcp,
+            commands::set_disabled_items,
             commands::get_proxy_url,
             commands::get_app_config,
             commands::update_app_config,
             commands::get_logs,
+            commands::check_claude_desktop,
+            commands::add_to_claude_desktop,
+            commands::update_in_claude_desktop,
+            commands::remove_from_claude_desktop,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
@@ -222,5 +227,5 @@ pub fn run() {
             }
         })
         .run(tauri::generate_context!())
-        .expect("error while running MCP Hub");
+        .expect("error while running Local MCP Proxy");
 }

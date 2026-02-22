@@ -93,6 +93,15 @@ export const useMcpStore = defineStore("mcp", () => {
     await fetchStatuses();
   }
 
+  async function setDisabledItems(
+    id: string,
+    disabledTools: string[],
+    disabledResources: string[],
+  ) {
+    await invoke("set_disabled_items", { id, disabledTools, disabledResources });
+    await fetchDetail(id);
+  }
+
   async function connectMcp(id: string) {
     await invoke("connect_mcp", { id });
     await fetchStatuses();
@@ -182,6 +191,7 @@ export const useMcpStore = defineStore("mcp", () => {
     addMcp,
     updateMcp,
     removeMcp,
+    setDisabledItems,
     connectMcp,
     disconnectMcp,
     getProxyUrl,

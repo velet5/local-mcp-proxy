@@ -150,16 +150,53 @@ impl McpManager {
             .get(id)
             .ok_or_else(|| anyhow!("MCP '{}' not found", id))?;
 
+        // Use config from self.config.mcps (canonical) so disabled lists are up-to-date
+        let config = self
+            .config
+            .mcps
+            .iter()
+            .find(|m| m.id == id)
+            .cloned()
+            .unwrap_or_else(|| conn.config.clone());
+
         let status = conn.status(self.config.proxy_port).await;
         let tools = conn.get_tools().await;
         let resources = conn.get_resources().await;
 
         Ok(McpDetail {
-            config: conn.config.clone(),
+            config,
             status,
             tools,
             resources,
         })
+    }
+
+    /// Update disabled tools/resources for an MCP without reconnecting
+    pub fn set_disabled_items(
+        &mut self,
+        id: &str,
+        disabled_tools: Vec<String>,
+        disabled_resources: Vec<String>,
+    ) -> Result<()> {
+        let mcp = self
+            .config
+            .mcps
+            .iter_mut()
+            .find(|m| m.id == id)
+            .ok_or_else(|| anyhow!("MCP '{}' not found", id))?;
+        mcp.disabled_tools = disabled_tools;
+        mcp.disabled_resources = disabled_resources;
+        Ok(())
+    }
+
+    /// Get disabled tools/resources for an MCP (used by proxy)
+    pub fn get_disabled_items(&self, id: &str) -> (Vec<String>, Vec<String>) {
+        self.config
+            .mcps
+            .iter()
+            .find(|m| m.id == id)
+            .map(|m| (m.disabled_tools.clone(), m.disabled_resources.clone()))
+            .unwrap_or_default()
     }
 
     /// Get a connection reference (for proxy use)

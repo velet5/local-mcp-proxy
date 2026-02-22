@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { invoke } from "@tauri-apps/api/core";
 import { useMcpStore } from "@/stores/mcpStore";
 import { ConnectionState, TRANSPORT_LABELS } from "@/types";
 import StatusBadge from "@/components/StatusBadge.vue";
@@ -17,6 +18,133 @@ const loading = ref(true);
 const proxyUrl = ref("");
 const copied = ref(false);
 const activeTab = ref<"tools" | "resources" | "logs">("tools");
+const claudeDesktopAdded = ref(false);
+const addingToClaudeDesktop = ref(false);
+const claudeDesktopDropdownOpen = ref(false);
+const updatingClaudeDesktop = ref(false);
+const removingFromClaudeDesktop = ref(false);
+
+// Manage mode state
+const editingMode = ref(false);
+const selectedTools = ref<Set<string>>(new Set());
+const selectedResources = ref<Set<string>>(new Set());
+const saving = ref(false);
+
+const disabledTools = computed(() => detail.value?.config.disabled_tools ?? []);
+const disabledResources = computed(() => detail.value?.config.disabled_resources ?? []);
+
+const enabledToolsCount = computed(() => {
+  if (!detail.value) return 0;
+  return detail.value.tools.length - disabledTools.value.length;
+});
+
+const enabledResourcesCount = computed(() => {
+  if (!detail.value) return 0;
+  return detail.value.resources.length - disabledResources.value.length;
+});
+
+const sortedTools = computed(() => {
+  if (!detail.value) return [];
+  if (editingMode.value) return detail.value.tools;
+  const disabled = disabledTools.value;
+  return [...detail.value.tools].sort((a, b) => {
+    const aDisabled = disabled.includes(a.name);
+    const bDisabled = disabled.includes(b.name);
+    if (aDisabled !== bDisabled) return aDisabled ? 1 : -1;
+    return 0;
+  });
+});
+
+const sortedResources = computed(() => {
+  if (!detail.value) return [];
+  if (editingMode.value) return detail.value.resources;
+  const disabled = disabledResources.value;
+  return [...detail.value.resources].sort((a, b) => {
+    const aDisabled = disabled.includes(a.uri);
+    const bDisabled = disabled.includes(b.uri);
+    if (aDisabled !== bDisabled) return aDisabled ? 1 : -1;
+    return 0;
+  });
+});
+
+function enterEditMode() {
+  if (!detail.value) return;
+  const disabled = disabledTools.value;
+  selectedTools.value = new Set(
+    detail.value.tools
+      .map((t) => t.name)
+      .filter((name) => !disabled.includes(name)),
+  );
+  const disabledRes = disabledResources.value;
+  selectedResources.value = new Set(
+    detail.value.resources
+      .map((r) => r.uri)
+      .filter((uri) => !disabledRes.includes(uri)),
+  );
+  editingMode.value = true;
+}
+
+function cancelEditMode() {
+  editingMode.value = false;
+}
+
+function selectAll() {
+  if (!detail.value) return;
+  if (activeTab.value === "tools") {
+    selectedTools.value = new Set(detail.value.tools.map((t) => t.name));
+  } else if (activeTab.value === "resources") {
+    selectedResources.value = new Set(
+      detail.value.resources.map((r) => r.uri),
+    );
+  }
+}
+
+function selectNone() {
+  if (activeTab.value === "tools") {
+    selectedTools.value = new Set();
+  } else if (activeTab.value === "resources") {
+    selectedResources.value = new Set();
+  }
+}
+
+function toggleTool(name: string) {
+  const s = new Set(selectedTools.value);
+  if (s.has(name)) {
+    s.delete(name);
+  } else {
+    s.add(name);
+  }
+  selectedTools.value = s;
+}
+
+function toggleResource(uri: string) {
+  const s = new Set(selectedResources.value);
+  if (s.has(uri)) {
+    s.delete(uri);
+  } else {
+    s.add(uri);
+  }
+  selectedResources.value = s;
+}
+
+async function saveDisabledItems() {
+  if (!detail.value) return;
+  saving.value = true;
+  try {
+    const newDisabledTools = detail.value.tools
+      .map((t) => t.name)
+      .filter((name) => !selectedTools.value.has(name));
+    const newDisabledResources = detail.value.resources
+      .map((r) => r.uri)
+      .filter((uri) => !selectedResources.value.has(uri));
+    await store.setDisabledItems(id.value, newDisabledTools, newDisabledResources);
+    editingMode.value = false;
+  } catch (e) {
+    alert(`Failed to save: ${e}`);
+  } finally {
+    saving.value = false;
+  }
+}
 
 const errorSummary = computed(() => {
   const message = detail.value?.status.error_message;
@@ -38,6 +166,13 @@ async function loadDetail() {
   } catch {
     // Proxy URL may not be available yet
   }
+  try {
+    claudeDesktopAdded.value = await invoke<boolean>("check_claude_desktop", {
+      mcpId: id.value,
+    });
+  } catch {
+    // Claude Desktop config may not exist
+  }
   loading.value = false;
 }
 
@@ -58,6 +193,43 @@ async function handleDelete() {
   }
 }
 
+async function handleAddToClaudeDesktop() {
+  addingToClaudeDesktop.value = true;
+  try {
+    await invoke("add_to_claude_desktop", { mcpId: id.value });
+    claudeDesktopAdded.value = true;
+  } catch (e) {
+    alert(`Failed to add to Claude Desktop: ${e}`);
+  } finally {
+    addingToClaudeDesktop.value = false;
+  }
+}
+
+async function handleUpdateInClaudeDesktop() {
+  updatingClaudeDesktop.value = true;
+  claudeDesktopDropdownOpen.value = false;
+  try {
+    await invoke("update_in_claude_desktop", { mcpId: id.value });
+  } catch (e) {
+    alert(`Failed to update in Claude Desktop: ${e}`);
+  } finally {
+    updatingClaudeDesktop.value = false;
+  }
+}
+
+async function handleRemoveFromClaudeDesktop() {
+  claudeDesktopDropdownOpen.value = false;
+  removingFromClaudeDesktop.value = true;
+  try {
+    await invoke("remove_from_claude_desktop", { mcpId: id.value });
+    claudeDesktopAdded.value = false;
+  } catch (e) {
+    alert(`Failed to remove from Claude Desktop: ${e}`);
+  } finally {
+    removingFromClaudeDesktop.value = false;
+  }
+}
+
 async function copyProxyUrl() {
   try {
     await navigator.clipboard.writeText(proxyUrl.value);
@@ -71,7 +243,7 @@ async function copyProxyUrl() {
 }
 
 function formatUptime(seconds?: number): string {
-  if (!seconds) return "—";
+  if (!seconds) return "\u2014";
   const d = Math.floor(seconds / 86400);
   const h = Math.floor((seconds % 86400) / 3600);
   const m = Math.floor((seconds % 3600) / 60);
@@ -82,11 +254,25 @@ function formatUptime(seconds?: number): string {
 }
 
 function formatTime(iso?: string): string {
-  if (!iso) return "—";
+  if (!iso) return "\u2014";
   return new Date(iso).toLocaleString();
 }
 
-onMounted(loadDetail);
+function handleClickOutside(e: MouseEvent) {
+  const target = e.target as HTMLElement;
+  if (!target.closest(".claude-desktop-dropdown")) {
+    claudeDesktopDropdownOpen.value = false;
+  }
+}
+
+onMounted(() => {
+  loadDetail();
+  document.addEventListener("click", handleClickOutside);
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener("click", handleClickOutside);
+});
 </script>
 
 <template>
@@ -181,11 +367,26 @@ onMounted(loadDetail);
               }}</span>
             </div>
             <div class="flex justify-between">
-              <span class="text-surface-500">Tools / Resources</span>
-              <span class="font-medium"
-                >{{ detail.status.tools_count }} /
-                {{ detail.status.resources_count }}</span
-              >
+              <span class="text-surface-500">Tools</span>
+              <span class="font-medium">
+                <template v-if="disabledTools.length > 0">
+                  {{ enabledToolsCount }} / {{ detail.tools.length }}
+                </template>
+                <template v-else>
+                  {{ detail.tools.length }}
+                </template>
+              </span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-surface-500">Resources</span>
+              <span class="font-medium">
+                <template v-if="disabledResources.length > 0">
+                  {{ enabledResourcesCount }} / {{ detail.resources.length }}
+                </template>
+                <template v-else>
+                  {{ detail.resources.length }}
+                </template>
+              </span>
             </div>
           </div>
           <div class="mt-4 pt-4 border-t border-surface-100 flex gap-2">
@@ -297,6 +498,75 @@ onMounted(loadDetail);
               </button>
             </div>
           </div>
+
+          <!-- Claude Desktop -->
+          <div class="mt-4 pt-4 border-t border-surface-100">
+            <!-- Add button (not yet added) -->
+            <button
+              v-if="!claudeDesktopAdded"
+              @click="handleAddToClaudeDesktop"
+              :disabled="addingToClaudeDesktop"
+              class="w-full px-3 py-2 text-sm font-medium rounded-lg transition-colors flex items-center justify-center gap-2 bg-surface-900 text-white hover:bg-surface-800 disabled:opacity-50"
+            >
+              {{ addingToClaudeDesktop ? "Adding..." : "Add to Claude Desktop" }}
+            </button>
+
+            <!-- Added state with dropdown -->
+            <div v-else class="relative claude-desktop-dropdown">
+              <button
+                @click="claudeDesktopDropdownOpen = !claudeDesktopDropdownOpen"
+                class="w-full px-3 py-2 text-sm font-medium rounded-lg transition-colors flex items-center justify-center gap-2 bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"
+              >
+                <svg
+                  class="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M5 13l4 4L19 7"
+                  />
+                </svg>
+                Added to Claude Desktop
+                <svg
+                  class="w-3.5 h-3.5 ml-auto transition-transform"
+                  :class="claudeDesktopDropdownOpen ? 'rotate-180' : ''"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M19 9l-7 7-7-7"
+                  />
+                </svg>
+              </button>
+              <div
+                v-if="claudeDesktopDropdownOpen"
+                class="absolute left-0 right-0 mt-1 bg-white border border-surface-200 rounded-lg shadow-lg z-10 overflow-hidden"
+              >
+                <button
+                  @click="handleUpdateInClaudeDesktop"
+                  :disabled="updatingClaudeDesktop"
+                  class="w-full px-3 py-2 text-sm text-left text-surface-700 hover:bg-surface-50 transition-colors disabled:opacity-50"
+                >
+                  {{ updatingClaudeDesktop ? "Updating..." : "Update" }}
+                </button>
+                <button
+                  @click="handleRemoveFromClaudeDesktop"
+                  :disabled="removingFromClaudeDesktop"
+                  class="w-full px-3 py-2 text-sm text-left text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
+                >
+                  {{ removingFromClaudeDesktop ? "Removing..." : "Remove" }}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -315,7 +585,7 @@ onMounted(loadDetail);
 
       <!-- Tabs: Tools / Resources -->
       <div class="bg-white rounded-lg border border-surface-200">
-        <div class="flex border-b border-surface-200">
+        <div class="flex items-center border-b border-surface-200">
           <button
             class="px-5 py-3 text-sm font-medium border-b-2 transition-colors"
             :class="
@@ -349,12 +619,68 @@ onMounted(loadDetail);
           >
             Logs ({{ filteredLogs.length }})
           </button>
+
+          <!-- Manage button (right-aligned) -->
+          <div class="ml-auto pr-3" v-if="activeTab !== 'logs'">
+            <button
+              v-if="!editingMode"
+              @click="enterEditMode"
+              class="px-3 py-1.5 text-xs font-medium text-surface-600 bg-surface-100 rounded-lg hover:bg-surface-200 transition-colors"
+            >
+              Manage
+            </button>
+          </div>
         </div>
+
+        <!-- Edit mode toolbar -->
+        <div
+          v-if="editingMode && activeTab !== 'logs'"
+          class="flex items-center gap-2 px-5 py-3 bg-surface-50 border-b border-surface-200"
+        >
+          <button
+            @click="selectAll"
+            class="px-2.5 py-1 text-xs font-medium text-surface-600 bg-white border border-surface-300 rounded hover:bg-surface-50 transition-colors"
+          >
+            Select All
+          </button>
+          <button
+            @click="selectNone"
+            class="px-2.5 py-1 text-xs font-medium text-surface-600 bg-white border border-surface-300 rounded hover:bg-surface-50 transition-colors"
+          >
+            Select None
+          </button>
+          <div class="flex-1"></div>
+          <button
+            @click="cancelEditMode"
+            class="px-3 py-1.5 text-xs font-medium text-surface-600 bg-white border border-surface-300 rounded-lg hover:bg-surface-50 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            @click="saveDisabledItems"
+            :disabled="saving"
+            class="px-3 py-1.5 text-xs font-medium text-white bg-surface-900 rounded-lg hover:bg-surface-800 transition-colors disabled:opacity-50"
+          >
+            {{ saving ? "Saving..." : "Save" }}
+          </button>
+        </div>
+
         <div class="p-5">
-          <ToolList v-if="activeTab === 'tools'" :tools="detail.tools" />
+          <ToolList
+            v-if="activeTab === 'tools'"
+            :tools="sortedTools"
+            :editing="editingMode"
+            :selected-tools="selectedTools"
+            :disabled-tools="disabledTools"
+            @toggle="toggleTool"
+          />
           <ResourceList
             v-if="activeTab === 'resources'"
-            :resources="detail.resources"
+            :resources="sortedResources"
+            :editing="editingMode"
+            :selected-resources="selectedResources"
+            :disabled-resources="disabledResources"
+            @toggle="toggleResource"
           />
           <div v-if="activeTab === 'logs'" class="space-y-2">
             <div

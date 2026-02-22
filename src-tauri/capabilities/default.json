@@ -1,6 +1,6 @@
 {
   "identifier": "default",
-  "description": "Default capabilities for MCP Hub",
+  "description": "Default capabilities for Local MCP Proxy",
   "windows": ["main"],
   "permissions": [
     "core:default",

@@ -22,6 +22,8 @@ export interface McpServerConfig {
   env?: Record<string, string>;
   headers?: Record<string, string>;
   enabled: boolean;
+  disabled_tools?: string[];
+  disabled_resources?: string[];
 }
 
 export interface McpStatus {

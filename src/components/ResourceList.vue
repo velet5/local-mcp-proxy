@@ -1,9 +1,20 @@
 <script setup lang="ts">
 import type { Resource } from "@/types";
 
-defineProps<{
+const props = defineProps<{
   resources: Resource[];
+  editing?: boolean;
+  selectedResources?: Set<string>;
+  disabledResources?: string[];
 }>();
+
+const emit = defineEmits<{
+  toggle: [resourceUri: string];
+}>();
+
+function isDisabled(uri: string): boolean {
+  return props.disabledResources?.includes(uri) ?? false;
+}
 </script>
 
 <template>
@@ -18,11 +29,35 @@ defineProps<{
     <div
       v-for="resource in resources"
       :key="resource.uri"
-      class="border border-surface-200 rounded-lg p-4 hover:bg-surface-50 transition-colors"
+      class="border border-surface-200 rounded-lg p-4 transition-colors"
+      :class="
+        !editing && isDisabled(resource.uri)
+          ? 'opacity-50'
+          : 'hover:bg-surface-50'
+      "
     >
       <div class="flex items-start gap-3">
+        <!-- Checkbox in edit mode -->
+        <label
+          v-if="editing"
+          class="flex items-center shrink-0 mt-1.5 cursor-pointer"
+          @click.stop
+        >
+          <input
+            type="checkbox"
+            :checked="selectedResources?.has(resource.uri)"
+            @change="emit('toggle', resource.uri)"
+            class="w-4 h-4 rounded border-surface-300 text-surface-900 focus:ring-surface-500 cursor-pointer"
+          />
+        </label>
+
         <div
-          class="w-8 h-8 rounded-lg bg-violet-50 text-violet-600 flex items-center justify-center shrink-0 mt-0.5"
+          class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5"
+          :class="
+            !editing && isDisabled(resource.uri)
+              ? 'bg-surface-100 text-surface-400'
+              : 'bg-violet-50 text-violet-600'
+          "
         >
           <svg
             class="w-4 h-4"
@@ -41,7 +76,12 @@ defineProps<{
         <div class="min-w-0 flex-1">
           <div
             v-if="resource.name"
-            class="text-sm font-semibold text-surface-900"
+            class="text-sm font-semibold"
+            :class="
+              !editing && isDisabled(resource.uri)
+                ? 'text-surface-500 line-through'
+                : 'text-surface-900'
+            "
           >
             {{ resource.name }}
           </div>

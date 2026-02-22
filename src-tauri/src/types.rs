@@ -39,6 +39,10 @@ pub struct McpServerConfig {
     pub headers: Option<HashMap<String, String>>,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    #[serde(default)]
+    pub disabled_tools: Vec<String>,
+    #[serde(default)]
+    pub disabled_resources: Vec<String>,
 }
 
 fn default_true() -> bool {
