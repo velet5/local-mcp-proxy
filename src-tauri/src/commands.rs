@@ -86,15 +86,27 @@ pub async fn remove_mcp(id: String, state: State<'_, AppState>) -> Result<(), St
 /// Manually connect a specific MCP
 #[tauri::command]
 pub async fn connect_mcp(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    let mgr = state.manager.lock().await;
-    mgr.connect_mcp(&id).await.map_err(|e| e.to_string())
+    // Grab the connection Arc, then drop the manager lock before the potentially
+    // long-running connect() call.  This prevents blocking all other commands
+    // (list_mcps, get_mcp_detail, etc.) while a connection handshake is in progress.
+    let conn = {
+        let mgr = state.manager.lock().await;
+        mgr.get_connection(&id)
+            .ok_or_else(|| format!("MCP '{}' not found", id))?
+    };
+    conn.connect().await.map_err(|e| e.to_string())
 }
 
 /// Manually disconnect a specific MCP
 #[tauri::command]
 pub async fn disconnect_mcp(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    let mgr = state.manager.lock().await;
-    mgr.disconnect_mcp(&id).await.map_err(|e| e.to_string())
+    let conn = {
+        let mgr = state.manager.lock().await;
+        mgr.get_connection(&id)
+            .ok_or_else(|| format!("MCP '{}' not found", id))?
+    };
+    conn.disconnect().await;
+    Ok(())
 }
 
 /// Update disabled tools/resources for a specific MCP
@@ -138,7 +150,7 @@ pub async fn update_app_config(
 
     {
         let mut mgr = state.manager.lock().await;
-        mgr.update_config(config.clone());
+        mgr.update_config(config.clone()).await;
     }
 
     // Persist the full config (including mcps)
@@ -338,10 +350,10 @@ fn find_bridge_binary() -> Result<String, String> {
         let entry = entry.map_err(|e| e.to_string())?;
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
-        if name_str.starts_with("mcp-hub-bridge") && !name_str.contains('.') {
+        if name_str.starts_with("local-mcp-proxy-bridge") && !name_str.contains('.') {
             return Ok(entry.path().to_string_lossy().to_string());
         }
     }
 
-    Err("mcp-hub-bridge binary not found next to the running executable".to_string())
+    Err("local-mcp-proxy-bridge binary not found next to the running executable".to_string())
 }

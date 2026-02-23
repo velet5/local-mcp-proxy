@@ -111,6 +111,8 @@ pub struct AppConfig {
     pub auto_reconnect: bool,
     #[serde(default = "default_max_reconnect")]
     pub max_reconnect_attempts: u32,
+    #[serde(default = "default_connection_timeout")]
+    pub connection_timeout_secs: u64,
     #[serde(default)]
     pub mcps: Vec<McpServerConfig>,
 }
@@ -136,6 +138,10 @@ fn default_max_reconnect() -> u32 {
     5
 }
 
+fn default_connection_timeout() -> u64 {
+    30
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -143,6 +149,7 @@ impl Default for AppConfig {
             health_check_interval_secs: default_health_interval(),
             auto_reconnect: true,
             max_reconnect_attempts: default_max_reconnect(),
+            connection_timeout_secs: default_connection_timeout(),
             mcps: Vec::new(),
         }
     }

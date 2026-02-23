@@ -90,7 +90,7 @@ function isDisabled(name: string): boolean {
               />
             </svg>
           </div>
-          <div class="min-w-0 flex-1">
+          <div class="min-w-0 flex-1 text-left">
             <div
               class="text-sm font-semibold"
               :class="

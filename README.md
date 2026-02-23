@@ -1,4 +1,4 @@
-# MCP Hub
+# Local MCP Proxy
 
 > 🤖 Vibecoded - Built with AI assistance
 

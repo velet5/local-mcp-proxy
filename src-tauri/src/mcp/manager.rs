@@ -28,7 +28,7 @@ impl McpManager {
 
         for mcp_config in configs {
             let id = mcp_config.id.clone();
-            let conn = Arc::new(McpConnection::new(mcp_config));
+            let conn = Arc::new(McpConnection::new(mcp_config, self.config.connection_timeout_secs));
 
             if conn.config.enabled {
                 match conn.connect().await {
@@ -56,7 +56,7 @@ impl McpManager {
             return Err(anyhow!("MCP with ID '{}' already exists", id));
         }
 
-        let conn = Arc::new(McpConnection::new(config.clone()));
+        let conn = Arc::new(McpConnection::new(config.clone(), self.config.connection_timeout_secs));
 
         // Attempt connection
         if config.enabled {
@@ -82,7 +82,7 @@ impl McpManager {
         }
 
         // Create new connection
-        let conn = Arc::new(McpConnection::new(config.clone()));
+        let conn = Arc::new(McpConnection::new(config.clone(), self.config.connection_timeout_secs));
 
         if config.enabled {
             if let Err(e) = conn.connect().await {
@@ -111,26 +111,6 @@ impl McpManager {
         Ok(())
     }
 
-    /// Manually connect a specific MCP
-    pub async fn connect_mcp(&self, id: &str) -> Result<()> {
-        let conn = self
-            .connections
-            .get(id)
-            .ok_or_else(|| anyhow!("MCP '{}' not found", id))?;
-
-        conn.connect().await
-    }
-
-    /// Manually disconnect a specific MCP
-    pub async fn disconnect_mcp(&self, id: &str) -> Result<()> {
-        let conn = self
-            .connections
-            .get(id)
-            .ok_or_else(|| anyhow!("MCP '{}' not found", id))?;
-
-        conn.disconnect().await;
-        Ok(())
-    }
 
     /// Get status list of all MCPs
     pub async fn list_statuses(&self) -> Vec<McpStatus> {
@@ -210,12 +190,18 @@ impl McpManager {
     }
 
     /// Update app config (does not reconnect MCPs)
-    pub fn update_config(&mut self, config: AppConfig) {
+    pub async fn update_config(&mut self, config: AppConfig) {
         self.config.proxy_port = config.proxy_port;
         self.config.health_check_interval_secs = config.health_check_interval_secs;
         self.config.auto_reconnect = config.auto_reconnect;
         self.config.max_reconnect_attempts = config.max_reconnect_attempts;
+        self.config.connection_timeout_secs = config.connection_timeout_secs;
         // Don't overwrite mcps list — it's managed by add/update/remove
+
+        // Propagate timeout change to all existing connections
+        for conn in self.connections.values() {
+            conn.set_connection_timeout(config.connection_timeout_secs).await;
+        }
     }
 
     /// Get proxy URL for a specific MCP
@@ -226,36 +212,27 @@ impl McpManager {
         )
     }
 
-    /// Run one health check cycle on all connections
-    pub async fn health_check_cycle(&self) {
+    /// Collect connections that need a ping or reconnect.
+    /// Returns (connections_to_ping, connections_to_reconnect) so the caller
+    /// can release the manager lock before doing the actual I/O.
+    pub async fn collect_health_work(
+        &self,
+    ) -> (Vec<(String, Arc<McpConnection>)>, Vec<(String, Arc<McpConnection>)>) {
+        let mut to_ping = Vec::new();
+        let mut to_reconnect = Vec::new();
+
         for (id, conn) in &self.connections {
             let state = conn.get_state().await;
 
             match state {
                 ConnectionState::Connected => {
-                    // Ping to verify health
-                    if let Err(e) = conn.ping().await {
-                        tracing::warn!("MCP '{}' ping failed: {}", id, e);
-                        // Will be picked up next cycle for reconnect
-                    }
+                    to_ping.push((id.clone(), Arc::clone(conn)));
                 }
                 ConnectionState::Error | ConnectionState::Disconnected => {
-                    // Try to reconnect if enabled and under max attempts
                     if self.config.auto_reconnect && conn.config.enabled {
                         let attempts = conn.get_reconnect_attempts().await;
                         if attempts < self.config.max_reconnect_attempts {
-                            tracing::info!(
-                                "MCP '{}': reconnect attempt {} of {}",
-                                id,
-                                attempts + 1,
-                                self.config.max_reconnect_attempts
-                            );
-                            conn.increment_reconnect_attempts().await;
-
-                            // Exponential backoff is handled by the health check interval
-                            if let Err(e) = conn.connect().await {
-                                tracing::warn!("MCP '{}' reconnect failed: {}", id, e);
-                            }
+                            to_reconnect.push((id.clone(), Arc::clone(conn)));
                         }
                     }
                 }
@@ -264,6 +241,8 @@ impl McpManager {
                 }
             }
         }
+
+        (to_ping, to_reconnect)
     }
 
     /// Disconnect all MCPs (e.g. on app exit)
@@ -282,18 +261,37 @@ pub fn start_health_loop(
 ) {
     tauri::async_runtime::spawn(async move {
         loop {
-            let interval_secs = {
+            // Grab config + work list under the lock, then release it.
+            let (interval_secs, to_ping, to_reconnect) = {
                 let mgr = manager.lock().await;
-                mgr.get_config().health_check_interval_secs
+                let interval = mgr.get_config().health_check_interval_secs;
+                let (ping, reconn) = mgr.collect_health_work().await;
+                (interval, ping, reconn)
             };
 
             time::sleep(time::Duration::from_secs(interval_secs)).await;
 
-            let mgr = manager.lock().await;
-            mgr.health_check_cycle().await;
+            // Perform pings and reconnects without holding the manager lock.
+            for (id, conn) in &to_ping {
+                if let Err(e) = conn.ping().await {
+                    tracing::warn!("MCP '{}' ping failed: {}", id, e);
+                }
+            }
 
-            // Emit updated statuses to the frontend
-            let statuses = mgr.list_statuses().await;
+            for (id, conn) in &to_reconnect {
+                let attempts = conn.get_reconnect_attempts().await;
+                tracing::info!("MCP '{}': reconnect attempt {}", id, attempts + 1);
+                conn.increment_reconnect_attempts().await;
+                if let Err(e) = conn.connect().await {
+                    tracing::warn!("MCP '{}' reconnect failed: {}", id, e);
+                }
+            }
+
+            // Emit updated statuses (briefly re-acquire lock for status read)
+            let statuses = {
+                let mgr = manager.lock().await;
+                mgr.list_statuses().await
+            };
             let _ = app_handle.emit("mcp-statuses-changed", &statuses);
         }
     });

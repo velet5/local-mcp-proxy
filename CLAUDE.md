@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MCP Hub is a Tauri 2 desktop app for managing multiple MCP (Model Context Protocol) servers. It provides a UI for connecting to, monitoring, and proxying requests to MCP servers via HTTP endpoints.
+Local MCP Proxy is a Tauri 2 desktop app for managing multiple MCP (Model Context Protocol) servers. It provides a UI for connecting to, monitoring, and proxying requests to MCP servers via HTTP endpoints.
 
 **Frontend**: Vue 3 + TypeScript + Pinia + Tailwind CSS, built with Vite
 **Backend**: Rust (Tauri 2) with rmcp SDK, Axum HTTP server, Tokio async runtime
@@ -30,7 +30,7 @@ The frontend calls Rust functions via Tauri's `invoke()` IPC. Commands are defin
 
 `AppState` (in `commands.rs`) holds three `Arc<Mutex<>>` components:
 - **McpManager** (`mcp/manager.rs`) — orchestrates all MCP connections, handles health checks and auto-reconnect
-- **ConfigManager** (`config.rs`) — persists settings to `~/.config/mcp-hub/config.json`
+- **ConfigManager** (`config.rs`) — persists settings to Tauri's `app_data_dir()/config.json` (on macOS: `~/Library/Application Support/com.github.velet5.localmcpproxy/config.json`)
 - **LogStore** — circular buffer (500 entries) of tracing events, forwarded to frontend
 
 ### MCP Connections
@@ -55,4 +55,4 @@ TypeScript types in `src/types/index.ts` mirror Rust types in `src-tauri/src/typ
 
 ### Sidecar Binary
 
-`src-tauri/src/bin/mcp-hub-bridge.rs` is a sidecar binary. The build script (`src-tauri/build.rs`) handles copying it to platform-specific paths. On first builds, it creates a placeholder if the binary doesn't exist yet.
+`src-tauri/src/bin/local-mcp-proxy-bridge.rs` is a sidecar binary. The build script (`src-tauri/build.rs`) handles copying it to platform-specific paths. On first builds, it creates a placeholder if the binary doesn't exist yet.

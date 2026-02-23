@@ -3,5 +3,5 @@
 
 fn main() {
     let _ = fix_path_env::fix();
-    mcp_hub_lib::run()
+    local_mcp_proxy_lib::run()
 }

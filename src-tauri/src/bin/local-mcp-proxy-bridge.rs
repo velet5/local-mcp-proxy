@@ -1,11 +1,11 @@
-//! MCP Hub Bridge — stdio-to-HTTP proxy for Claude Desktop
+//! Local MCP Proxy Bridge — stdio-to-HTTP proxy for Claude Desktop
 //!
-//! Reads JSON-RPC messages from stdin, forwards them to the MCP Hub HTTP proxy,
+//! Reads JSON-RPC messages from stdin, forwards them to the Local MCP Proxy HTTP proxy,
 //! and writes responses to stdout. This allows Claude Desktop (which only supports
-//! stdio MCP servers) to talk to any MCP server managed by MCP Hub.
+//! stdio MCP servers) to talk to any MCP server managed by Local MCP Proxy.
 //!
 //! Usage:
-//!   mcp-hub-bridge --mcp-id <SERVER_ID> [--port <PORT>]
+//!   local-mcp-proxy-bridge --mcp-id <SERVER_ID> [--port <PORT>]
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -43,8 +43,8 @@ async fn main() -> std::process::ExitCode {
     let args = match parse_args() {
         Ok(a) => a,
         Err(e) => {
-            eprintln!("mcp-hub-bridge: {}", e);
-            eprintln!("Usage: mcp-hub-bridge --mcp-id <ID> [--port <PORT>]");
+            eprintln!("local-mcp-proxy-bridge: {}", e);
+            eprintln!("Usage: local-mcp-proxy-bridge --mcp-id <ID> [--port <PORT>]");
             return std::process::ExitCode::from(1);
         }
     };
@@ -52,7 +52,7 @@ async fn main() -> std::process::ExitCode {
     let url = format!("http://127.0.0.1:{}/mcp/{}", args.port, args.mcp_id);
     let client = reqwest::Client::new();
 
-    eprintln!("mcp-hub-bridge: proxying stdio <-> {}", url);
+    eprintln!("local-mcp-proxy-bridge: proxying stdio <-> {}", url);
 
     let stdin = BufReader::new(tokio::io::stdin());
     let mut stdout = tokio::io::stdout();
@@ -67,24 +67,24 @@ async fn main() -> std::process::ExitCode {
                             continue;
                         }
                         if let Err(e) = handle_line(&client, &url, &line, &mut stdout).await {
-                            eprintln!("mcp-hub-bridge: error: {}", e);
+                            eprintln!("local-mcp-proxy-bridge: error: {}", e);
                         }
                     }
                     Ok(None) => break,
                     Err(e) => {
-                        eprintln!("mcp-hub-bridge: stdin error: {}", e);
+                        eprintln!("local-mcp-proxy-bridge: stdin error: {}", e);
                         break;
                     }
                 }
             }
             _ = tokio::signal::ctrl_c() => {
-                eprintln!("mcp-hub-bridge: interrupted");
+                eprintln!("local-mcp-proxy-bridge: interrupted");
                 break;
             }
         }
     }
 
-    eprintln!("mcp-hub-bridge: shutting down, sending DELETE for session cleanup");
+    eprintln!("local-mcp-proxy-bridge: shutting down, sending DELETE for session cleanup");
     let _ = client.delete(&url).send().await;
 
     std::process::ExitCode::SUCCESS

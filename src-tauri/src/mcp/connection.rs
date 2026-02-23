@@ -123,11 +123,12 @@ pub struct McpConnection {
     last_ping: Arc<Mutex<Option<SystemTime>>>,
     error_message: Arc<Mutex<Option<String>>>,
     reconnect_attempts: Arc<Mutex<u32>>,
+    connection_timeout_secs: Arc<Mutex<u64>>,
 }
 
 impl McpConnection {
     /// Create a new connection (not yet connected)
-    pub fn new(config: McpServerConfig) -> Self {
+    pub fn new(config: McpServerConfig, connection_timeout_secs: u64) -> Self {
         Self {
             config,
             state: Arc::new(Mutex::new(ConnectionState::Disconnected)),
@@ -138,7 +139,13 @@ impl McpConnection {
             last_ping: Arc::new(Mutex::new(None)),
             error_message: Arc::new(Mutex::new(None)),
             reconnect_attempts: Arc::new(Mutex::new(0)),
+            connection_timeout_secs: Arc::new(Mutex::new(connection_timeout_secs)),
         }
+    }
+
+    /// Update the connection timeout
+    pub async fn set_connection_timeout(&self, secs: u64) {
+        *self.connection_timeout_secs.lock().await = secs;
     }
 
     /// Get current connection state
@@ -190,11 +197,25 @@ impl McpConnection {
     pub async fn connect(&self) -> Result<()> {
         self.set_state(ConnectionState::Connecting).await;
 
-        let result = match self.config.transport_type {
-            TransportType::Stdio => self.connect_stdio().await,
-            TransportType::Sse => self.connect_sse().await,
-            TransportType::StreamableHttp => self.connect_http().await,
-        };
+        // Wrap the connect in an overall timeout so we don't block forever
+        // if the server never completes the MCP handshake.
+        let timeout_secs = *self.connection_timeout_secs.lock().await;
+        let target = self.config.url.as_deref()
+            .or(self.config.command.as_deref())
+            .unwrap_or("unknown");
+        let result = tokio::time::timeout(Duration::from_secs(timeout_secs), async {
+            match self.config.transport_type {
+                TransportType::Stdio => self.connect_stdio().await,
+                TransportType::Sse => self.connect_sse().await,
+                TransportType::StreamableHttp => self.connect_http().await,
+            }
+        })
+        .await
+        .unwrap_or_else(|_| Err(anyhow!(
+            "Connection to {} timed out after {} seconds (server reachable but MCP handshake did not complete)",
+            target,
+            timeout_secs
+        )));
 
         match result {
             Ok(()) => {
@@ -294,6 +315,29 @@ impl McpConnection {
             .as_ref()
             .ok_or_else(|| anyhow!("No URL specified for SSE transport"))?;
 
+        // Quick reachability probe — a simple GET to the SSE endpoint.
+        let client = self.build_http_client()?;
+        match client.get(url.as_str()).send().await {
+            Err(e) => return Err(anyhow!("Cannot reach {}: {}", url, e)),
+            Ok(resp) if resp.status().is_server_error() => {
+                let status = resp.status();
+                return Err(anyhow!(
+                    "Server error from {} — HTTP {} {}",
+                    url,
+                    status.as_u16(),
+                    status.canonical_reason().unwrap_or("")
+                ));
+            }
+            Ok(resp) => {
+                tracing::debug!(
+                    "MCP '{}': SSE probe to {} returned HTTP {}",
+                    self.config.name,
+                    url,
+                    resp.status().as_u16()
+                );
+            }
+        }
+
         use crate::mcp::legacy_sse::LegacySseWorker;
         use rmcp::transport::worker::WorkerTransport;
 
@@ -313,29 +357,16 @@ impl McpConnection {
 
         let service = ().serve(transport)
             .await
-            .context("Failed to initialize legacy SSE MCP client")?;
+            .context(format!("MCP handshake failed with {}", url))?;
 
         *self.service.lock().await = Some(service);
         Ok(())
     }
 
-    /// Connect via Streamable HTTP
-    async fn connect_http(&self) -> Result<()> {
-        let url = self
-            .config
-            .url
-            .as_ref()
-            .ok_or_else(|| anyhow!("No URL specified for HTTP transport"))?;
-
-        use rmcp::transport::StreamableHttpClientTransport;
-        use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
-
-        // Build a custom reqwest client with headers and no overall timeout
-        // (the SSE stream is long-lived so we can't set a global timeout).
-        // No read_timeout or timeout — SSE streams are long-lived and must not be killed.
-        // reqwest has no read timeout by default, which is what we want.
+    /// Build a reqwest client with configured headers and timeouts
+    fn build_http_client(&self) -> Result<reqwest::Client> {
         let mut client_builder = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(10))
             .pool_idle_timeout(Duration::from_secs(90));
 
         // Apply custom headers from config (e.g. Authorization, cookies, etc.)
@@ -354,16 +385,72 @@ impl McpConnection {
             client_builder = client_builder.default_headers(header_map);
         }
 
-        let client = client_builder
+        client_builder
             .build()
-            .context("Failed to build HTTP client")?;
+            .context("Failed to build HTTP client")
+    }
+
+    /// Connect via Streamable HTTP
+    async fn connect_http(&self) -> Result<()> {
+        let url = self
+            .config
+            .url
+            .as_ref()
+            .ok_or_else(|| anyhow!("No URL specified for HTTP transport"))?;
+
+        let client = self.build_http_client()?;
+
+        // Quick probe: POST to the endpoint to check basic reachability before
+        // committing to the full MCP handshake.  This gives a clear, fast error
+        // ("connection refused", "404 Not Found", etc.) instead of a vague
+        // timeout 30 seconds later.
+        let probe = client
+            .post(url.as_str())
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body("{\"jsonrpc\":\"2.0\",\"method\":\"ping\",\"id\":0}")
+            .send()
+            .await;
+
+        match &probe {
+            Err(e) => {
+                // Connection-level failure (refused, DNS, TLS, etc.)
+                return Err(anyhow!("Cannot reach {}: {}", url, e));
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                if status.is_server_error() {
+                    return Err(anyhow!(
+                        "Server error from {} — HTTP {} {}",
+                        url,
+                        status.as_u16(),
+                        status.canonical_reason().unwrap_or("")
+                    ));
+                }
+                // 2xx, 4xx (including 404 which some MCP servers return for
+                // non-initialize requests) are fine — proceed to handshake.
+                tracing::debug!(
+                    "MCP '{}': probe to {} returned HTTP {}",
+                    self.config.name,
+                    url,
+                    status.as_u16()
+                );
+            }
+        }
+
+        use rmcp::transport::StreamableHttpClientTransport;
+        use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
+
+        // Build a fresh client for the actual MCP transport (the probe client
+        // consumed its connection pool state).
+        let client = self.build_http_client()?;
 
         let config = StreamableHttpClientTransportConfig::with_uri(url.as_str());
         let transport = StreamableHttpClientTransport::with_client(GracefulHttpClient(client), config);
 
         let service = ().serve(transport)
             .await
-            .context("Failed to initialize HTTP MCP client")?;
+            .context(format!("MCP handshake failed with {}", url))?;
 
         *self.service.lock().await = Some(service);
         Ok(())

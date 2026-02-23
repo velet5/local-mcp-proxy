@@ -10,7 +10,7 @@ async function handleConnect(id: string) {
   try {
     await store.connectMcp(id);
   } catch (e) {
-    console.error("Connect failed:", e);
+    store.error = `Connect failed: ${e}`;
   }
 }
 
@@ -18,7 +18,7 @@ async function handleDisconnect(id: string) {
   try {
     await store.disconnectMcp(id);
   } catch (e) {
-    console.error("Disconnect failed:", e);
+    store.error = `Disconnect failed: ${e}`;
   }
 }
 </script>

@@ -65,6 +65,7 @@ export interface AppConfig {
   health_check_interval_secs: number;
   auto_reconnect: boolean;
   max_reconnect_attempts: number;
+  connection_timeout_secs: number;
   mcps: McpServerConfig[];
 }
 

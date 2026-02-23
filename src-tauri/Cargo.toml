@@ -1,22 +1,22 @@
 [package]
-name = "mcp-hub"
+name = "local-mcp-proxy"
 version = "0.1.0"
 description = "A centralized MCP server manager for macOS"
 authors = ["you"]
 edition = "2021"
-default-run = "mcp-hub"
+default-run = "local-mcp-proxy"
 
 [lib]
-name = "mcp_hub_lib"
+name = "local_mcp_proxy_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [[bin]]
-name = "mcp-hub"
+name = "local-mcp-proxy"
 path = "src/main.rs"
 
 [[bin]]
-name = "mcp-hub-bridge"
-path = "src/bin/mcp-hub-bridge.rs"
+name = "local-mcp-proxy-bridge"
+path = "src/bin/local-mcp-proxy-bridge.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

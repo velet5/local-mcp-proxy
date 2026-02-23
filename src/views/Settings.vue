@@ -10,6 +10,7 @@ const form = ref<AppConfig>({
   health_check_interval_secs: 30,
   auto_reconnect: true,
   max_reconnect_attempts: 5,
+  connection_timeout_secs: 30,
   mcps: [],
 });
 
@@ -34,6 +35,12 @@ async function handleSave() {
     }
     if (form.value.health_check_interval_secs < 5) {
       throw new Error("Health check interval must be at least 5 seconds.");
+    }
+    if (
+      form.value.connection_timeout_secs < 5 ||
+      form.value.connection_timeout_secs > 300
+    ) {
+      throw new Error("Connection timeout must be between 5 and 300 seconds.");
     }
 
     await store.updateAppConfig(form.value);
@@ -129,6 +136,24 @@ onMounted(loadConfig);
         />
         <p class="text-xs text-surface-400 mt-1">
           Stop reconnecting after this many consecutive failures.
+        </p>
+      </div>
+
+      <!-- Connection timeout -->
+      <div class="p-5">
+        <label class="block text-sm font-medium text-surface-700 mb-1.5"
+          >Connection Timeout (seconds)</label
+        >
+        <input
+          v-model.number="form.connection_timeout_secs"
+          type="number"
+          min="5"
+          max="300"
+          class="w-full px-3 py-2 border border-surface-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-surface-900 focus:border-transparent"
+        />
+        <p class="text-xs text-surface-400 mt-1">
+          Maximum time to wait for an MCP server to complete its handshake
+          before giving up.
         </p>
       </div>
 

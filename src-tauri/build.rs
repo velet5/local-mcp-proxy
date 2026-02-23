@@ -8,7 +8,7 @@ fn main() {
         "debug"
     };
 
-    let sidecar = PathBuf::from(format!("binaries/mcp-hub-bridge-{}", triple));
+    let sidecar = PathBuf::from(format!("binaries/local-mcp-proxy-bridge-{}", triple));
     std::fs::create_dir_all("binaries").ok();
 
     // Try to copy a previously-built bridge binary into the sidecar slot.
@@ -16,13 +16,13 @@ fn main() {
     // small placeholder to satisfy Tauri's resource-path check.  On every
     // subsequent build (including `tauri build`) the real binary from the
     // previous compilation is picked up automatically.
-    let candidate = PathBuf::from(format!("target/{}/mcp-hub-bridge", profile));
+    let candidate = PathBuf::from(format!("target/{}/local-mcp-proxy-bridge", profile));
     if candidate.exists() {
         std::fs::copy(&candidate, &sidecar).ok();
     } else if !sidecar.exists() {
         std::fs::write(
             &sidecar,
-            "#!/bin/sh\necho 'mcp-hub-bridge: run cargo build first' >&2\nexit 1\n",
+            "#!/bin/sh\necho 'local-mcp-proxy-bridge: run cargo build first' >&2\nexit 1\n",
         )
         .ok();
         #[cfg(unix)]
