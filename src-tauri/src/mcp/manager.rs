@@ -228,7 +228,7 @@ impl McpManager {
                 ConnectionState::Connected => {
                     to_ping.push((id.clone(), Arc::clone(conn)));
                 }
-                ConnectionState::Error | ConnectionState::Disconnected => {
+                ConnectionState::Error => {
                     if self.config.auto_reconnect && conn.config.enabled {
                         let attempts = conn.get_reconnect_attempts().await;
                         if attempts < self.config.max_reconnect_attempts {
@@ -237,7 +237,8 @@ impl McpManager {
                     }
                 }
                 _ => {
-                    // Connecting/Reconnecting — skip
+                    // Disconnected (user explicitly disconnected or disabled),
+                    // Connecting, Reconnecting — skip
                 }
             }
         }
